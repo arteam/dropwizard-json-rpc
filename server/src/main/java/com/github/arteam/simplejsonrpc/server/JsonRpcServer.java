@@ -11,10 +11,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.ValueNode;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcError;
 import com.github.arteam.simplejsonrpc.core.domain.*;
-import com.github.arteam.simplejsonrpc.server.metadata.ClassMetadata;
-import com.github.arteam.simplejsonrpc.server.metadata.ErrorDataResolver;
-import com.github.arteam.simplejsonrpc.server.metadata.MethodMetadata;
-import com.github.arteam.simplejsonrpc.server.metadata.ParameterMetadata;
+import com.github.arteam.simplejsonrpc.server.metadata.*;
 import com.google.common.base.Defaults;
 import com.google.common.base.Function;
 import com.google.common.base.Strings;
@@ -32,6 +29,10 @@ import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+
+import static com.google.common.base.Strings.isNullOrEmpty;
+import static java.lang.String.format;
 
 /**
  * Date: 07.06.14
@@ -71,11 +72,13 @@ public class JsonRpcServer {
     /**
      * Cache of classes metadata
      */
-    private LoadingCache<Class<?>, ClassMetadata> classesMetadata;
+    private LoadingCache<Class<?>, ServiceMetadata> classesMetadata;
     /**
      * Cache of classes metadata
      */
     private LoadingCache<Class<? extends Throwable>, ErrorDataResolver> dataResolvers;
+
+    private ServiceMetadataFactory serviceMetadataFactory = new AnnotationsServiceMetadataFactory();
 
     /**
      * Init JSON-RPC server
@@ -86,17 +89,17 @@ public class JsonRpcServer {
     public JsonRpcServer(@NotNull ObjectMapper mapper, @NotNull CacheBuilderSpec cacheBuilderSpec) {
         this.mapper = mapper;
         classesMetadata = CacheBuilder.from(cacheBuilderSpec).build(
-                new CacheLoader<Class<?>, ClassMetadata>() {
+                new CacheLoader<Class<?>, ServiceMetadata>() {
                     @Override
-                    public ClassMetadata load(Class<?> clazz) throws Exception {
-                        return Reflections.getClassMetadata(clazz);
+                    public ServiceMetadata load(Class<?> clazz) throws Exception {
+                        return serviceMetadataFactory.createServiceMetadata(clazz);
                     }
                 });
         dataResolvers = CacheBuilder.from(cacheBuilderSpec).build(
                 new CacheLoader<Class<? extends Throwable>, ErrorDataResolver>() {
                     @Override
                     public ErrorDataResolver load(Class<? extends Throwable> clazz) throws Exception {
-                        return Reflections.buildErrorDataResolver(clazz);
+                        return serviceMetadataFactory.buildErrorDataResolver(clazz);
                     }
                 });
     }
@@ -128,6 +131,32 @@ public class JsonRpcServer {
         return new JsonRpcServer(new ObjectMapper(), cacheSpec);
     }
 
+    @NotNull
+    public ServiceMetadataFactory getServiceMetadataFactory() {
+        return serviceMetadataFactory;
+    }
+
+    @NotNull
+    public void setServiceMetadataFactory(@NotNull ServiceMetadataFactory serviceMetadataFactory) {
+        this.serviceMetadataFactory = serviceMetadataFactory;
+    }
+
+    /**
+     * get and/or register a new service metadata instance in cache
+     *
+     * @param service
+     * @return
+     */
+    @NotNull
+    protected final ServiceMetadata getServiceMetadata(@NotNull  Object service ) {
+
+        try {
+            return classesMetadata.get(service.getClass());
+        } catch (ExecutionException e) {
+            throw new IllegalStateException(e.getCause());
+        }
+
+    }
     /**
      * Handles a JSON-RPC request(single or batch),
      * delegates processing to the service, and returns a JSON-RPC response.
@@ -232,31 +261,33 @@ public class JsonRpcServer {
      */
     @NotNull
     private ErrorResponse handleError(@NotNull Request request, @NotNull Exception e) {
-        Throwable rootCause = Throwables.getRootCause(e);
-        Annotation[] annotations = rootCause.getClass().getAnnotations();
-        JsonRpcError jsonRpcErrorAnnotation =
-                Reflections.getAnnotation(annotations, JsonRpcError.class);
-        if (jsonRpcErrorAnnotation == null) {
+        final Throwable rootCause = Throwables.getRootCause(e);
+        final Optional<ErrorMetadata> errorMetadata = serviceMetadataFactory.createErrorMetadata(rootCause);
+        if (!errorMetadata.isPresent()) {
             return new ErrorResponse(request.getId(), INTERNAL_ERROR);
         }
-        int code = jsonRpcErrorAnnotation.code();
-        String message = Strings.isNullOrEmpty(jsonRpcErrorAnnotation.message()) ?
-                rootCause.getMessage() : jsonRpcErrorAnnotation.message();
-        if (Strings.isNullOrEmpty(message)) {
+
+        final String message = errorMetadata.get().getMessage();
+
+        if (isNullOrEmpty(message)) {
             log.warn("Error message should not be empty");
             return new ErrorResponse(request.getId(), INTERNAL_ERROR);
         }
-        JsonNode data;
+
         try {
-            data = dataResolvers.get(rootCause.getClass())
+            final JsonNode data = dataResolvers.get(rootCause.getClass())
                     .resolveData(rootCause)
-                    .map((Function<Object, JsonNode>) input -> mapper.valueToTree(input))
+                    .map( input -> (JsonNode)mapper.valueToTree(input) )
                     .orElse(null);
+
+            return new ErrorResponse(request.getId(),
+                    new ErrorMessage(errorMetadata.get().getCode(), message, data));
+
         } catch (Exception e1) {
             log.error("Error while processing error data: ", e1);
             return new ErrorResponse(request.getId(), INTERNAL_ERROR);
         }
-        return new ErrorResponse(request.getId(), new ErrorMessage(code, message, data));
+
     }
 
     /**
@@ -289,7 +320,7 @@ public class JsonRpcServer {
             return new ErrorResponse(id, INVALID_REQUEST);
         }
 
-        ClassMetadata classMetadata = classesMetadata.get(service.getClass());
+        ServiceMetadata classMetadata = classesMetadata.get(service.getClass());
         if (!classMetadata.isService()) {
             log.warn(service.getClass() + " is not available as a JSON-RPC 2.0 service");
             return new ErrorResponse(id, METHOD_NOT_FOUND);
@@ -340,7 +371,7 @@ public class JsonRpcServer {
             int index = param.getIndex();
             String name = param.getName();
             JsonNode jsonNode = params.isObject() ? params.get(name) : params.get(index);
-            // Handle omitted value
+            // Handle omitted name
             if (jsonNode == null || jsonNode.isNull()) {
                 if (param.isOptional()) {
                     methodParams[index] = getDefaultValue(parameterType);
@@ -377,13 +408,13 @@ public class JsonRpcServer {
     @Nullable
     private Object getDefaultValue(@NotNull Class<?> type) {
         if (type == com.google.common.base.Optional.class) {
-            // If it's Guava optional then handle it as an absent value
+            // If it's Guava optional then handle it as an absent name
             return com.google.common.base.Optional.absent();
         } else if (type == java.util.Optional.class) {
-            // If it's Java optional then handle it as an absent value
+            // If it's Java optional then handle it as an absent name
             return java.util.Optional.empty();
         } else if (type.isPrimitive()) {
-            // If parameter is a primitive set the appropriate default value
+            // If parameter is a primitive set the appropriate default name
             return Defaults.defaultValue(type);
         }
         return null;

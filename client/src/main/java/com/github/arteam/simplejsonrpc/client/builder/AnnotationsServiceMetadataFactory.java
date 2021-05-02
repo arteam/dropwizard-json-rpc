@@ -5,9 +5,10 @@ import com.github.arteam.simplejsonrpc.client.JsonRpcParams;
 import com.github.arteam.simplejsonrpc.client.ParamsType;
 import com.github.arteam.simplejsonrpc.client.generator.AtomicLongIdGenerator;
 import com.github.arteam.simplejsonrpc.client.generator.IdGenerator;
-import com.github.arteam.simplejsonrpc.client.metadata.ClassMetadata;
 import com.github.arteam.simplejsonrpc.client.metadata.MethodMetadata;
 import com.github.arteam.simplejsonrpc.client.metadata.ParameterMetadata;
+import com.github.arteam.simplejsonrpc.client.metadata.ServiceMetadata;
+import com.github.arteam.simplejsonrpc.client.metadata.ServiceMetadataFactory;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcMethod;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcOptional;
 import com.github.arteam.simplejsonrpc.core.annotation.JsonRpcParam;
@@ -21,32 +22,27 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Date: 11/17/14
- * Time: 8:04 PM
- * Utility class for gathering meta-information about client proxies through reflection
- */
-class Reflections {
-
-    private Reflections() {
-    }
-
+public class AnnotationsServiceMetadataFactory implements ServiceMetadataFactory {
     /**
      * Gets remote service interface metadata
      *
-     * @param clazz an interface for representing a remote service
+     * @param serviceClass an interface for representing a remote service
      * @return class metadata
      */
-    @NotNull
-    public static ClassMetadata getClassMetadata(@NotNull Class<?> clazz) {
+    @Override
+    public @NotNull ServiceMetadata createServiceMetadata(@NotNull Class<?> serviceClass) {
+
         Map<Method, MethodMetadata> methodsMetadata = new HashMap<Method, MethodMetadata>(32);
-        Class<?> searchClass = clazz;
+        String serviceName = serviceClass.getCanonicalName();
+        Class<?> searchClass = serviceClass;
+
         while (searchClass != null) {
             JsonRpcService rpcServiceAnn = getAnnotation(searchClass.getAnnotations(), JsonRpcService.class);
             if (rpcServiceAnn == null) {
-                throw new IllegalStateException("Class '" + clazz.getCanonicalName() +
+                throw new IllegalStateException("Class '" + serviceClass.getCanonicalName() +
                         "' is not annotated as @JsonRpcService");
             }
+
             Method[] methods = searchClass.getMethods();
             for (Method method : methods) {
                 Annotation[] methodAnnotations = method.getDeclaredAnnotations();
@@ -82,10 +78,10 @@ class Reflections {
             searchClass = searchClass.getSuperclass();
         }
 
-        Annotation[] classAnnotations = clazz.getDeclaredAnnotations();
+        Annotation[] classAnnotations = serviceClass.getDeclaredAnnotations();
         IdGenerator<?> idGenerator = getIdGenerator(classAnnotations);
         ParamsType paramsType = getParamsType(classAnnotations);
-        return new ClassMetadata(paramsType, idGenerator, methodsMetadata);
+        return new ServiceMetadata(paramsType, idGenerator, methodsMetadata);
     }
 
 
@@ -93,7 +89,7 @@ class Reflections {
      * Get an actual id generator
      */
     @NotNull
-    private static IdGenerator<?> getIdGenerator(@NotNull Annotation[] classAnnotations) {
+    private IdGenerator<?> getIdGenerator(@NotNull Annotation[] classAnnotations) {
         JsonRpcId jsonRpcIdAnn = getAnnotation(classAnnotations, JsonRpcId.class);
         Class<? extends IdGenerator<?>> idGeneratorClazz = (jsonRpcIdAnn == null) ?
                 AtomicLongIdGenerator.class : jsonRpcIdAnn.value();
@@ -105,7 +101,7 @@ class Reflections {
     }
 
     @Nullable
-    private static ParamsType getParamsType(@NotNull Annotation[] annotations) {
+    private ParamsType getParamsType(@NotNull Annotation[] annotations) {
         JsonRpcParams rpcParamsAnn = getAnnotation(annotations, JsonRpcParams.class);
         return rpcParamsAnn != null ? rpcParamsAnn.value() : null;
 
@@ -113,7 +109,7 @@ class Reflections {
 
     @SuppressWarnings("unchecked")
     @Nullable
-    private static <T extends Annotation> T getAnnotation(@Nullable Annotation[] annotations,
+    private <T extends Annotation> T getAnnotation(@Nullable Annotation[] annotations,
                                                           @NotNull Class<T> clazz) {
         if (annotations != null) {
             for (Annotation annotation : annotations) {
