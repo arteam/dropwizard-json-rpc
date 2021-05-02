@@ -62,18 +62,35 @@ public class RequestBuilder<T> extends AbstractBuilder {
     private final JavaType javaType;
 
     /**
+     * Generic type for representing expected response type
+     */
+    @NotNull
+    private final Boolean versionCheck;
+
+    /**
      * Creates a new default request builder without actual parameters
      *
-     * @param transport transport for request performing
-     * @param mapper    mapper for JSON processing
+     * @param transport    transport for request performing
+     * @param mapper       mapper for JSON processing
+     * @param versionCheck enable or disable the version checking of JSON-RPC responses
      */
-    public RequestBuilder(@NotNull Transport transport, @NotNull ObjectMapper mapper) {
+    public RequestBuilder(@NotNull Transport transport, @NotNull ObjectMapper mapper, @NotNull Boolean versionCheck) {
         super(transport, mapper);
         id = NullNode.instance;
         objectParams = mapper.createObjectNode();
         arrayParams = mapper.createArrayNode();
         method = "";
         javaType = TypeFactory.defaultInstance().constructType(Object.class);
+        this.versionCheck = versionCheck;
+    }
+    /**
+     * Creates a new default request builder without actual parameters
+     *
+     * @param transport transport for request performing
+     * @param mapper    mapper for JSON processing
+     */
+    public RequestBuilder(@NotNull Transport transport, @NotNull ObjectMapper mapper) {
+        this(transport, mapper, true);
     }
 
     /**
@@ -89,13 +106,25 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     private RequestBuilder(@NotNull Transport transport, @NotNull ObjectMapper mapper, @NotNull String method,
                            @NotNull ValueNode id, @NotNull ObjectNode objectParams, @NotNull ArrayNode arrayParams,
-                           @NotNull JavaType javaType) {
+                           @NotNull JavaType javaType, @NotNull Boolean versionCheck) {
         super(transport, mapper);
         this.method = method;
         this.id = id;
         this.objectParams = objectParams;
         this.arrayParams = arrayParams;
         this.javaType = javaType;
+        this.versionCheck = versionCheck;
+    }
+
+    /**
+     * Enable or disable the version checking of JSON-RPC responses
+     *
+     * @param versionCheck false to disable
+     * @return new builder
+     */
+    @NotNull
+    public RequestBuilder<T> checkVersion(@NotNull Boolean versionCheck) {
+        return new RequestBuilder<T>(transport, mapper, method, id, objectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -106,7 +135,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     @NotNull
     public RequestBuilder<T> id(@NotNull Long id) {
-        return new RequestBuilder<T>(transport, mapper, method, new LongNode(id), objectParams, arrayParams, javaType);
+        return new RequestBuilder<T>(transport, mapper, method, new LongNode(id), objectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -117,7 +146,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     @NotNull
     public RequestBuilder<T> id(@NotNull Integer id) {
-        return new RequestBuilder<T>(transport, mapper, method, new IntNode(id), objectParams, arrayParams, javaType);
+        return new RequestBuilder<T>(transport, mapper, method, new IntNode(id), objectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -128,7 +157,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     @NotNull
     public RequestBuilder<T> id(@NotNull String id) {
-        return new RequestBuilder<T>(transport, mapper, method, new TextNode(id), objectParams, arrayParams, javaType);
+        return new RequestBuilder<T>(transport, mapper, method, new TextNode(id), objectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -139,7 +168,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     @NotNull
     public RequestBuilder<T> method(@NotNull String method) {
-        return new RequestBuilder<T>(transport, mapper, method, id, objectParams, arrayParams, javaType);
+        return new RequestBuilder<T>(transport, mapper, method, id, objectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -165,7 +194,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     public RequestBuilder<T> param(@NotNull String name, @NotNull Object value) {
         ObjectNode newObjectParams = objectParams.deepCopy();
         newObjectParams.set(name, mapper.valueToTree(value));
-        return new RequestBuilder<T>(transport, mapper, method, id, newObjectParams, arrayParams, javaType);
+        return new RequestBuilder<T>(transport, mapper, method, id, newObjectParams, arrayParams, javaType, versionCheck);
     }
 
     /**
@@ -177,7 +206,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
      */
     @NotNull
     public RequestBuilder<T> params(@NotNull Object... values) {
-        return new RequestBuilder<T>(transport, mapper, method, id, objectParams, arrayParams(values), javaType);
+        return new RequestBuilder<T>(transport, mapper, method, id, objectParams, arrayParams(values), javaType, versionCheck);
     }
 
     /**
@@ -190,7 +219,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     @NotNull
     public <NT> RequestBuilder<NT> returnAs(@NotNull Class<NT> responseType) {
         return new RequestBuilder<NT>(transport, mapper, method, id, objectParams, arrayParams,
-                TypeFactory.defaultInstance().constructType(responseType));
+                TypeFactory.defaultInstance().constructType(responseType), versionCheck);
     }
 
     /**
@@ -203,7 +232,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     @NotNull
     public <E> RequestBuilder<List<E>> returnAsList(@NotNull Class<E> elementType) {
         return new RequestBuilder<List<E>>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructCollectionType(List.class, elementType));
+                mapper.getTypeFactory().constructCollectionType(List.class, elementType), versionCheck);
     }
 
     /**
@@ -216,7 +245,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     @NotNull
     public <E> RequestBuilder<Set<E>> returnAsSet(@NotNull Class<E> elementType) {
         return new RequestBuilder<Set<E>>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructCollectionType(Set.class, elementType));
+                mapper.getTypeFactory().constructCollectionType(Set.class, elementType), versionCheck);
     }
 
     /**
@@ -232,7 +261,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     public <E> RequestBuilder<Collection<E>> returnAsCollection(@NotNull Class<? extends Collection> collectionType,
                                                                 @NotNull Class<E> elementType) {
         return new RequestBuilder<Collection<E>>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructCollectionType(collectionType, elementType));
+                mapper.getTypeFactory().constructCollectionType(collectionType, elementType), versionCheck);
     }
 
     /**
@@ -245,7 +274,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     @NotNull
     public <E> RequestBuilder<E[]> returnAsArray(@NotNull Class<E> elementType) {
         return new RequestBuilder<E[]>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructArrayType(elementType));
+                mapper.getTypeFactory().constructArrayType(elementType), versionCheck);
     }
 
     /**
@@ -263,7 +292,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     public <V> RequestBuilder<Map<String, V>> returnAsMap(@NotNull Class<? extends Map> mapClass,
                                                           @NotNull Class<V> valueType) {
         return new RequestBuilder<Map<String, V>>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructMapType(mapClass, String.class, valueType));
+                mapper.getTypeFactory().constructMapType(mapClass, String.class, valueType), versionCheck);
     }
 
     /**
@@ -278,7 +307,7 @@ public class RequestBuilder<T> extends AbstractBuilder {
     @NotNull
     public <NT> RequestBuilder<NT> returnAs(@NotNull TypeReference<NT> tr) {
         return new RequestBuilder<NT>(transport, mapper, method, id, objectParams, arrayParams,
-                mapper.getTypeFactory().constructType(tr.getType()));
+                mapper.getTypeFactory().constructType(tr.getType()), versionCheck);
     }
 
     /**
@@ -317,20 +346,22 @@ public class RequestBuilder<T> extends AbstractBuilder {
             JsonNode responseNode = mapper.readTree(textResponse);
             JsonNode result = responseNode.get(RESULT);
             JsonNode error = responseNode.get(ERROR);
-            JsonNode version = responseNode.get(JSONRPC);
             JsonNode id = responseNode.get(ID);
 
-            if (version == null) {
-                throw new IllegalStateException("Not a JSON-RPC response: " + responseNode);
-            }
-            if (!version.asText().equals(VERSION_2_0)) {
-                throw new IllegalStateException("Bad protocol version in a response: " + responseNode);
+            if (versionCheck) {
+                JsonNode version = responseNode.get(JSONRPC);
+                if (version == null) {
+                    throw new IllegalStateException("Not a JSON-RPC response: " + responseNode);
+                }
+                if (!version.asText().equals(VERSION_2_0)) {
+                    throw new IllegalStateException("Bad protocol version in a response: " + responseNode);
+                }
             }
             if (id == null) {
                 throw new IllegalStateException("Unspecified id in a response: " + responseNode);
             }
 
-            if (error == null) {
+            if (error == null || error instanceof NullNode) {
                 if (result != null) {
                     return mapper.convertValue(result, javaType);
                 } else {
